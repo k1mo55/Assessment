@@ -1,0 +1,5 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+pydantic-settings==2.10.1
+sentence-transformers==3.1.1
+transformers==4.44.2

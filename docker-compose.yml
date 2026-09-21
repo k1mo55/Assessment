@@ -1,0 +1,104 @@
+services:
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    environment:
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-pdf_chunks_bge_small_384}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
+      EMBEDDING_SERVICE_URL: ${EMBEDDING_SERVICE_URL:-http://embedding-service:8002}
+      INGESTION_SERVICE_URL: ${INGESTION_SERVICE_URL:-http://ingestion-service:8001}
+      INGESTION_REQUEST_TIMEOUT_SECONDS: ${INGESTION_REQUEST_TIMEOUT_SECONDS:-300}
+      SEARCH_TOP_K: ${SEARCH_TOP_K:-5}
+      SEARCH_SCORE_THRESHOLD: ${SEARCH_SCORE_THRESHOLD:-0}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-pdf-documents}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+    depends_on:
+      ingestion-service:
+        condition: service_healthy
+      embedding-service:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
+  ingestion-service:
+    build: ./ingestion_service
+    environment:
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-pdf_chunks_bge_small_384}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
+      EMBEDDING_SERVICE_URL: ${EMBEDDING_SERVICE_URL:-http://embedding-service:8002}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-pdf-documents}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
+      SEMANTIC_SIMILARITY_THRESHOLD: ${SEMANTIC_SIMILARITY_THRESHOLD:-0.58}
+      CHUNK_MINIMUM_CHARACTERS: ${CHUNK_MINIMUM_CHARACTERS:-250}
+      CHUNK_MAXIMUM_CHARACTERS: ${CHUNK_MAXIMUM_CHARACTERS:-2000}
+    depends_on:
+      embedding-service:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8001)).close()"]
+      interval: 5s
+      start_period: 10s
+    restart: unless-stopped
+
+  embedding-service:
+    build: ./embedding_service
+    environment:
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-auto}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - embedding_cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8002)).close()"]
+      interval: 10s
+      start_period: 5m
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+volumes:
+  minio_data:
+  qdrant_data:
+  embedding_cache:
